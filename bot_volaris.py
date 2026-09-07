@@ -4,21 +4,25 @@ import time
 import random
 import getpass
 import sys
+import json
 import requests
+from pathlib import Path
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 # ---------- CONFIG ----------
 TARGET_URL = "https://paseanual.volaris.com/y4/subscriptions/vplus/availability"
-HEADLESS = True            # Pon False la primera vez para depurar visualmente
-INITIAL_INTERVAL = 20      # segundos entre intentos iniciales
-MAX_INTERVAL = 600         # límite del backoff
-JITTER = 5                 # segundos de variación aleatoria
-OUTPUT_DIR = "outputs"   # carpeta donde se guardan screenshots y HTML
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")       # opcional
-TELEGRAM_CHAT = os.getenv("TELEGRAM_CHAT_ID")      # opcional
+INITIAL_INTERVAL = int(os.getenv("INITIAL_INTERVAL", "20"))      # segundos entre intentos iniciales
+MAX_INTERVAL = int(os.getenv("MAX_INTERVAL", "600"))          # límite del backoff
+JITTER = int(os.getenv("JITTER", "5"))                       # segundos de variación aleatoria
+OUTPUT_DIR = os.getenv("OUTPUT_DIR", "outputs")              # carpeta donde se guardan screenshots y HTML
+# TELEGRAM_TOKEN y TELEGRAM_CHAT pueden venir de variables de entorno o del prompt al iniciar
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT = os.getenv("TELEGRAM_CHAT_ID")
+CREDENTIALS_FILE = os.getenv("CREDENTIALS_FILE", "credentials.json")
 # ----------------------------
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+
 
 def notify(text):
     print(text)
@@ -37,7 +41,7 @@ def notify(text):
             print("Error al enviar Telegram:", e)
 
 
-def try_fill_any(page, selectors, value, timeout=1500):
+def try_fill_any(page, selectors, value):
     """Intenta llenar un campo probando varios selectores comunes."""
     for s in selectors:
         try:
@@ -104,8 +108,8 @@ def save_snapshot(page, prefix="attempt"):
     return screenshot, htmlfile
 
 
-def do_search_once(playwright, user, passwd, origin, dest, depart, ret_date=None):
-    browser = playwright.chromium.launch(headless=HEADLESS)
+def do_search_once(playwright, user, passwd, origin, dest, depart, ret_date=None, headless=True):
+    browser = playwright.chromium.launch(headless=headless)
     context = browser.new_context()
     page = context.new_page()
     try:
@@ -156,7 +160,6 @@ def do_search_once(playwright, user, passwd, origin, dest, depart, ret_date=None
     page.wait_for_timeout(4000)
 
     available = check_availability(page)
-    # Guardar snapshot en todos los intentos
     prefix = "found" if available else "attempt"
     screenshot, htmlfile = save_snapshot(page, prefix=prefix)
 
@@ -164,17 +167,92 @@ def do_search_once(playwright, user, passwd, origin, dest, depart, ret_date=None
     return available, screenshot, htmlfile
 
 
+def select_credentials():
+    """Carga credentials.json y permite seleccionar una cuenta o introducir manualmente.
+    Formato esperado: list of {"alias": "personal", "email": "a@b.com", "password": "pwd"}
+    """
+    if not os.path.exists(CREDENTIALS_FILE):
+        return None
+    try:
+        with open(CREDENTIALS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"No se pudo leer {CREDENTIALS_FILE}: {e}")
+        return None
+    if not isinstance(data, list) or len(data) == 0:
+        print(f"{CREDENTIALS_FILE} debe contener una lista de cuentas.")
+        return None
+
+    print("Cuentas encontradas en credentials.json:")
+    for i, entry in enumerate(data, start=1):
+        alias = entry.get("alias") or "-"
+        email = entry.get("email") or "-"
+        print(f"  {i}) {alias} <{email}>")
+    print("  n) Ingresar credenciales manualmente")
+
+    choice = input("Selecciona el número de la cuenta a usar (o 'n'): ").strip().lower()
+    if choice == 'n':
+        return None
+    try:
+        idx = int(choice) - 1
+        if idx < 0 or idx >= len(data):
+            print("Índice fuera de rango.")
+            return None
+        entry = data[idx]
+        email = entry.get("email")
+        password = entry.get("password")
+        if not email or not password:
+            print("La entrada seleccionada no tiene email o password.")
+            return None
+        return email, password
+    except Exception:
+        print("Selección inválida.")
+        return None
+
+
 def main():
+    global TELEGRAM_TOKEN, TELEGRAM_CHAT
+
     print("AUTOMATIZADOR Volaris (Python + Playwright)")
-    print("Introduce credenciales (no se guardan).")
-    user = input("Email: ").strip()
-    passwd = getpass.getpass("Contraseña (oculta): ")
+
+    creds = select_credentials()
+    if creds:
+        user, passwd = creds
+        print(f"Usando cuenta: {user}")
+    else:
+        print("Introduce credenciales (no se guardan).")
+        user = input("Email: ").strip()
+        passwd = getpass.getpass("Contraseña (oculta): ")
 
     print("\nIntroduce la ruta y fechas a buscar.")
     origin = input("Origen (código o ciudad): ").strip()
     dest = input("Destino (código o ciudad): ").strip()
     depart = input("Fecha ida (YYYY-MM-DD): ").strip()
     ret = input("Fecha regreso (YYYY-MM-DD) [Enter = solo ida]: ").strip() or None
+
+    # Solicitar configuración de Telegram al iniciar
+    use_telegram = input("¿Quieres notificaciones por Telegram cuando se encuentre el vuelo? (s/n): ").strip().lower()
+    if use_telegram in ('s', 'si', 'y'):
+        if TELEGRAM_TOKEN:
+            use_env_tok = input("Se detectó TELEGRAM_TOKEN en variables de entorno. ¿Deseas usarlo? (s/n): ").strip().lower()
+            if use_env_tok in ('s', 'si', 'y'):
+                token = TELEGRAM_TOKEN
+            else:
+                token = input("Introduce el token del bot de Telegram: ").strip()
+        else:
+            token = input("Introduce el token del bot de Telegram: ").strip()
+        chat = input("Introduce el chat_id (número) donde quieres recibir la notificación: ").strip()
+        if token:
+            TELEGRAM_TOKEN = token
+        if chat:
+            TELEGRAM_CHAT = chat
+        print("Notificaciones por Telegram activadas.")
+    else:
+        print("Notificaciones por Telegram desactivadas.")
+
+    # Preguntar si abrir navegador visible
+    headless_choice = input("¿Abrir navegador visible? (s/n) [s]: ").strip().lower() or 's'
+    headless = False if headless_choice in ('s', 'si', 'y') else True
 
     interval = INITIAL_INTERVAL
     attempt = 0
@@ -184,7 +262,7 @@ def main():
             while True:
                 attempt += 1
                 notify(f"Intento #{attempt}: {origin} -> {dest} {depart} {('(vuelta '+ret+')') if ret else ''}")
-                ok, shot, htmlfile = do_search_once(pw, user, passwd, origin, dest, depart, ret)
+                ok, shot, htmlfile = do_search_once(pw, user, passwd, origin, dest, depart, ret_date=ret, headless=headless)
                 if ok:
                     msg = f"¡Disponibilidad encontrada para {origin} -> {dest} {depart}! Screenshot: {shot or 'no guardada'} HTML: {htmlfile or 'no guardado'}"
                     notify(msg)
@@ -200,6 +278,7 @@ def main():
         except Exception as e:
             notify(f"Error inesperado: {e}")
             sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
