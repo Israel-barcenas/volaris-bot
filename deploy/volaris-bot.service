@@ -1,0 +1,18 @@
+[Unit]
+Description=Volaris V+ Availability Bot
+After=network.target
+
+[Service]
+Type=simple
+User=Israel-barcenas
+WorkingDirectory=/home/Israel-barcenas/volaris-bot
+Environment=PYTHONUNBUFFERED=1
+# If you prefer to set TELEGRAM_TOKEN/TELEGRAM_CHAT_ID here, add them as Environment entries.
+# Environment=TELEGRAM_TOKEN=yourtoken
+# Environment=TELEGRAM_CHAT_ID=yourchatid
+ExecStart=/home/Israel-barcenas/volaris-bot/run_bot.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
