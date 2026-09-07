@@ -3,8 +3,9 @@
 Se han añadido herramientas para ejecutar el bot en paralelo y desplegarlo como un servicio systemd.
 
 Archivos añadidos
-- run_bot.sh — script de arranque que activa el virtualenv y ejecuta el bot con nohup.
+- run_bot.sh — script de arranque que activa el virtualenv y lanza el bot en background.
 - deploy/volaris-bot.service — unidad systemd de ejemplo. Ajusta rutas y variables antes de habilitar.
+- deploy/volaris-bot.env.example — plantilla de variables de entorno sensibles (NO subir al repo).
 
 Instrucciones rápidas para desplegar en un VPS (asumimos ruta /home/Israel-barcenas/volaris-bot y usuario Israel-barcenas)
 
@@ -24,10 +25,15 @@ Instrucciones rápidas para desplegar en un VPS (asumimos ruta /home/Israel-barc
   { "alias": "work",     "email": "miemail2@example.com", "password": "MiPass2" }
 ]
 
-3) Ajusta variables de entorno (recomendado en /etc/environment o systemd unit):
-- TELEGRAM_TOKEN
-- TELEGRAM_CHAT_ID
-- OPTIONAL: CREDENTIALS_FILE, INITIAL_INTERVAL, MAX_INTERVAL, JITTER, OUTPUT_DIR, CONCURRENCY
+3) Variables de entorno sensibles: crea /etc/volaris-bot.env a partir de la plantilla
+
+   sudo cp deploy/volaris-bot.env.example /etc/volaris-bot.env
+   sudo chown root:root /etc/volaris-bot.env
+   sudo chmod 600 /etc/volaris-bot.env
+   # Edita el archivo y coloca tus valores reales (TELEGRAM_TOKEN y TELEGRAM_CHAT_ID al menos)
+   sudo nano /etc/volaris-bot.env
+
+El servicio systemd está configurado para leer /etc/volaris-bot.env y cargar esas variables al iniciar.
 
 4) Hacer ejecutable el script de arranque
 
@@ -45,8 +51,8 @@ Instrucciones rápidas para desplegar en un VPS (asumimos ruta /home/Israel-barc
    o revisa bot.log en la carpeta del repo si iniciaste con run_bot.sh
 
 Notas
-- La unidad systemd no incluye TELEGRAM_TOKEN ni TELEGRAM_CHAT_ID por seguridad; coloca esas variables en /etc/environment o añade Environment= en la unit (con cuidado).
-- Ajusta User y WorkingDirectory en la unit para que correspondan a tu servidor.
+- No incluyas /etc/volaris-bot.env en el repositorio ni en backups accesibles. Manténlo con permisos 600.
+- Ajusta User y WorkingDirectory en la unit para que correspondan a tu servidor si es necesario.
 - Por defecto la concurrencia (CONCURRENCY) es 3. Puedes cambiarlo exportando la variable de entorno antes de iniciar el servicio.
 
 Ejemplo para ejecutar con concurrency=5 manualmente:
